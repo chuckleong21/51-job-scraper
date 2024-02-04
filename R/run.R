@@ -31,13 +31,13 @@ library(purrr)
 
 # company info ------------------------------------------------------------
 
-jobs <- purrr::map(seq_len(50), \(i) {
+jobs <- map(seq_len(50), \(i) {
   tidyjson::read_json(glue::glue("json/json_result.page.{i}.json")) %>% 
     enter_object("resultbody", "job", "items") %>% 
     gather_array("itemId") %>% 
     spread_all()
 }) %>% 
-  purrr::list_rbind()
+  list_rbind()
 
 china <- read_json("json/city_area.json") %>% 
   gather_array() %>% 
@@ -60,8 +60,8 @@ target_district <- city_district %>%
 jobs_by_district <- jobs %>% 
   filter(
     workAreaCode %in% target_district, 
-    str_detect(jobName, "(实习)|(管培)|(SQL)|(客服)|(销售)|(运营)|(会计)|(前台)|(商品)", negate = TRUE), 
-    str_detect(fullCompanyName, "友邦|服饰|服装|温雅|香精|奥威亚|时装|瑞众|内衣", negate = TRUE),
+    # str_detect(jobName, "(实习)|(管培)|(SQL)|(客服)|(销售)|(运营)|(会计)|(前台)|(商品)", negate = TRUE), 
+    # str_detect(fullCompanyName, "友邦|服饰|服装|温雅|香精|奥威亚|时装|瑞众|内衣", negate = TRUE),
     str_length(provideSalaryString) > 0, 
     str_length(jobName) > 1, 
   ) %>% 
@@ -91,9 +91,47 @@ jobs_by_district <- jobs %>%
   relocate(c(salaryLower, salaryUpper, salaryMultiplier), .after = provideSalaryString) %>% 
   select(-provideSalaryString, -salaryMultiplier, -bonusString)
   
-jobs_by_district %>% 
-  count(jobName, sort = TRUE) %>% 
-  View()
+
+# jobs visualization ----------------------------------------------------
+
+library(ggplot2)
+jobs_by_title <- openxlsx::read.xlsx("jobTitle.xlsx") %>% arrange(jobId) %>% select(-c(jobId:jobNameSegment)) %>% 
+  as_tibble() %>% 
+  bind_cols(jobs_by_district %>% arrange(jobId)) %>% 
+  separate_rows(jobTitle, sep = ",") %>% 
+  mutate(jobTitle = forcats::fct_lump_min(jobTitle, 10, other_level = "其他"), 
+         jobAreaLevelDetail.districtString = replace_na(jobAreaLevelDetail.districtString, "不分区")) %>% 
+  filter(!is.na(jobTitle), 
+         !jobAreaLevelDetail.districtString %in% c("禅城区", "三水区", "顺德区")) 
+
+jobs_by_title %>% 
+  filter(!is.na(jobTitle)) %>% 
+  count(jobTitle) %>% 
+  mutate(jobTitle = forcats::fct_reorder(jobTitle, n)) %>% 
+  ggplot(aes(x = n, y = jobTitle, fill = jobTitle)) +
+  geom_col(show.legend = FALSE) + 
+  scale_x_continuous(breaks = scales::breaks_pretty(n = 10)) +
+  scale_fill_viridis_d() + 
+  theme_light()
+
+jobs_by_title %>% 
+  group_by(jobTitle) %>% 
+  mutate(jobTitle = forcats::fct_reorder(jobTitle, salaryLower, median, .desc = TRUE)) %>% 
+  pivot_longer(salaryLower:salaryUpper, names_to = "salaryBound", values_to = "salary") %>% 
+  ggplot(aes(x = jobAreaLevelDetail.districtString)) + 
+  geom_boxplot(aes(y = salary, fill = salaryBound))  + 
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 5)) + 
+  facet_grid(cols = vars(jobTitle)) + 
+  theme_light()
+
+jobs_by_title %>% 
+  ggplot(aes(x = salaryLower, y = salaryUpper)) + 
+  stat_density_2d_filled(contour_var = "ndensity") + 
+  facet_wrap(vars(jobTitle), scales = "free") + 
+  # scale_x_log10() + 
+  # scale_y_log10() + 
+  theme_light()
+  
 
 # jobs_extend <- jobs %>% 
 #   select(jobId, workAreaCode, companyHref) %>% 
